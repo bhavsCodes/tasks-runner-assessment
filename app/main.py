@@ -1,9 +1,10 @@
 import json
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from app.database import get_connection, initialize_database
+from app.dependencies import validate_dependencies
 from app.models import TaskCreate, TaskResponse, TaskStatus
 
 
@@ -22,6 +23,14 @@ def root():
 
 @app.post("/tasks", response_model=TaskResponse)
 def create_task(task: TaskCreate):
+    missing_dependencies = validate_dependencies(task.dependencies)
+
+    if missing_dependencies:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown dependencies: {missing_dependencies}",
+        )
+    
     task_id = str(uuid.uuid4())
 
     connection = get_connection()
