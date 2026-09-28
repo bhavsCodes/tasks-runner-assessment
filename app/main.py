@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from app.database import get_connection, initialize_database
 from app.dependencies import validate_dependencies
 from app.models import TaskCreate, TaskResponse, TaskStatus
+from app.scheduler import start_scheduler
 
 
 app = FastAPI(title="Task Runner Service")
@@ -14,6 +15,7 @@ app = FastAPI(title="Task Runner Service")
 @app.on_event("startup")
 def startup_event():
     initialize_database()
+    start_scheduler()
 
 
 @app.get("/")
