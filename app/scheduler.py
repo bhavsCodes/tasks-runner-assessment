@@ -95,6 +95,24 @@ def update_task_status(task_id, status, error=None):
     connection.close()
 
 
+def is_task_cancelled(task_id):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT status FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+
+    row = cursor.fetchone()
+    connection.close()
+
+    return (
+        row is not None
+        and row["status"] == TaskStatus.CANCELLED.value
+    )
+
+
 def execute_task(task):
     global _running_tasks
 
@@ -124,6 +142,9 @@ def execute_task(task):
 
             time.sleep(2)
 
+            if is_task_cancelled(task["id"]):
+                return
+
             if random.random() >= task["failure_chance"]:
                 update_task_status(
                     task["id"],
@@ -136,7 +157,7 @@ def execute_task(task):
 
                 update_task_status(
                     task["id"],
-                    TaskStatus.WAITING.value,
+                    TaskStatus.RUNNING.value,
                     f"Attempt {attempt_number} failed. Retrying in {delay} seconds.",
                 )
 

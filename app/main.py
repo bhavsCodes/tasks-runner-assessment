@@ -103,3 +103,70 @@ def get_task(task_id: str):
         max_retries=row["max_retries"],
         error=row["error"],
     )
+
+
+
+@app.post("/tasks/{task_id}/cancel", response_model=TaskResponse)
+def cancel_task(task_id: str):
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+
+    row = cursor.fetchone()
+
+    if row is None:
+        connection.close()
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found"
+        )
+
+    if row["status"] in [
+        TaskStatus.SUCCEEDED.value,
+        TaskStatus.FAILED.value,
+        TaskStatus.BLOCKED.value,
+        TaskStatus.CANCELLED.value,
+    ]:
+        connection.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel task in status {row['status']}"
+        )
+
+    cursor.execute(
+        """
+        UPDATE tasks
+        SET status = ?, error = ?
+        WHERE id = ?
+        """,
+        (
+            TaskStatus.CANCELLED.value,
+            "Task cancelled by user",
+            task_id,
+        ),
+    )
+
+    connection.commit()
+
+    cursor.execute(
+        "SELECT * FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+
+    updated_row = cursor.fetchone()
+    connection.close()
+
+    return TaskResponse(
+        id=updated_row["id"],
+        name=updated_row["name"],
+        status=TaskStatus(updated_row["status"]),
+        dependencies=json.loads(updated_row["dependencies"]),
+        attempts=updated_row["attempts"],
+        max_retries=updated_row["max_retries"],
+        error=updated_row["error"],
+    )
+
