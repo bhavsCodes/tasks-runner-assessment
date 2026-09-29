@@ -25,10 +25,37 @@ def initialize_database():
             attempts INTEGER NOT NULL DEFAULT 0,
             max_retries INTEGER NOT NULL DEFAULT 2,
             failure_chance REAL NOT NULL DEFAULT 0.0,
-            error TEXT
+            error TEXT,
+            create_at TEXT,
+            started_at TEXT,
+            completed_at TEXT
         )
         """
     )
 
+
+    cursor.execute("PRAGMA table_info(tasks)")
+
+    existing_columns = {
+        row["name"] for row in cursor.fetchall()
+    }
+
+    if "created_at" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN created_at TEXT"
+        )
+
+    if "started_at" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN started_at TEXT"
+        )
+
+    if "completed_at" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE tasks ADD COLUMN completed_at TEXT"
+        )
+
+
+    
     connection.commit()
     connection.close()

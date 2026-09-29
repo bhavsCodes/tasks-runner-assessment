@@ -2,12 +2,17 @@ import json
 import random
 import threading
 import time
+import os
 
 from app.database import get_connection
 from app.models import TaskStatus
 
+from datetime import datetime,timezone
 
-MAX_CONCURRENT_TASKS = 2
+
+MAX_CONCURRENT_TASKS = int(
+    os.getenv("MAX_CONCURRENT_TASKS", "2")
+)
 
 _running_tasks = 0
 _lock = threading.Lock()
@@ -82,18 +87,32 @@ def update_task_status(task_id, status, error=None):
     connection = get_connection()
     cursor = connection.cursor()
 
+    completed_at = None
+
+    if status in [
+        TaskStatus.SUCCEEDED.value,
+        TaskStatus.FAILED.value,
+        TaskStatus.BLOCKED.value,
+        TaskStatus.CANCELLED.value,
+    ]:
+        completed_at = datetime.now(timezone.utc).isoformat()
+
     cursor.execute(
         """
         UPDATE tasks
-        SET status = ?, error = ?
+        SET status = ?, error = ?, completed_at = ?
         WHERE id = ?
         """,
-        (status, error, task_id),
+        (
+            status,
+            error,
+            completed_at,
+            task_id,
+        ),
     )
 
     connection.commit()
     connection.close()
-
 
 def is_task_cancelled(task_id):
     connection = get_connection()
@@ -126,13 +145,14 @@ def execute_task(task):
             cursor.execute(
                 """
                 UPDATE tasks
-                SET status = ?, attempts = ?, error = ?
+                SET status = ?, attempts = ?, error = ?,started_at = ?
                 WHERE id = ?
                 """,
                 (
                     TaskStatus.RUNNING.value,
                     attempt_number,
                     None,
+                    datetime.now(timezone.utc).isoformat(),
                     task["id"],
                 ),
             )
@@ -140,7 +160,7 @@ def execute_task(task):
             connection.commit()
             connection.close()
 
-            time.sleep(2)
+            time.sleep(random.uniform(1,3))
 
             if is_task_cancelled(task["id"]):
                 return

@@ -28,3 +28,6 @@ class TaskResponse(BaseModel):
     attempts: int
     max_retries: int
     error: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None

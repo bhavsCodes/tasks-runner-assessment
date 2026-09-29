@@ -1,4 +1,11 @@
 import time
+import uuid
+
+from app.database import get_connection
+from app.models import TaskStatus
+from app.main import startup_event
+
+from app.dependencies import has_cycle
 
 from app.scheduler import start_scheduler
 from fastapi.testclient import TestClient
@@ -182,3 +189,89 @@ def test_task_retries_and_fails():
     assert final_data is not None
     assert final_data["status"] == "failed"
     assert final_data["attempts"] == 3
+
+
+def test_stats_endpoint():
+    response = client.get("/stats")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert "running" in data
+    assert "waiting" in data
+
+    assert isinstance(data["running"], int)
+    assert isinstance(data["waiting"], int)
+
+
+def test_restart_recovers_running_tasks():
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    task_id = str(uuid.uuid4())
+
+    cursor.execute(
+        """
+        INSERT INTO tasks (
+            id,
+            name,
+            status,
+            dependencies,
+            attempts,
+            max_retries,
+            failure_chance,
+            error
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            task_id,
+            "restart_test_task",
+            TaskStatus.RUNNING.value,
+            "[]",
+            1,
+            2,
+            0.0,
+            None,
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+    startup_event()
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT status, error FROM tasks WHERE id = ?",
+        (task_id,),
+    )
+
+    row = cursor.fetchone()
+    connection.close()
+
+    assert row["status"] == TaskStatus.WAITING.value
+    assert row["error"] == "Recovered after service restart"
+
+
+def test_cycle_detection():
+    graph = {
+        "task_a": ["task_b"],
+        "task_b": ["task_c"],
+        "task_c": ["task_a"],
+    }
+
+    assert has_cycle(graph) is True
+
+
+def test_no_cycle_detection():
+    graph = {
+        "task_a": ["task_b"],
+        "task_b": ["task_c"],
+        "task_c": [],
+    }
+
+    assert has_cycle(graph) is False
