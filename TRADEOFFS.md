@@ -1,118 +1,95 @@
 # Tradeoffs
 
-## SQLite instead of a production database
+## 1. SQLite instead of PostgreSQL
 
-SQLite was chosen because this is a small take-home service and it keeps setup simple.
+### Choice
 
-Advantages:
-- no separate database server is required
-- easy to run locally
-- supports persistence across restarts
+I used SQLite for persistence.
 
-Tradeoff:
-- SQLite is not ideal for high concurrency or distributed deployments
+### Alternative
 
-For a production system, PostgreSQL or another managed database would be a better choice.
+A production database such as PostgreSQL.
 
-## Background threads instead of a distributed worker system
+### Why I chose SQLite
 
-The scheduler uses Python background threads to execute tasks.
+SQLite keeps the project simple to run locally and does not require a separate database server.
 
-Advantages:
-- simple to understand
-- no additional infrastructure is required
-- suitable for a small local service
+It is enough for a small take-home assignment and still provides persistence across application restarts.
 
-Tradeoff:
-- tasks only run inside one application process
-- this design does not scale across multiple service instances
-- a process crash can interrupt running work
+### Why I did not choose PostgreSQL
 
-For a larger system, a queue and worker system such as Celery, RQ, or a cloud queue service would be more appropriate.
+PostgreSQL would provide better concurrency and production scalability, but it would add installation and setup overhead that is not necessary for this small service.
 
-## Polling scheduler
+---
 
-The scheduler checks the database periodically for waiting tasks.
+## 2. Background threads instead of a distributed task queue
 
-Advantages:
-- straightforward implementation
-- easy to debug
-- works well for this assignment
+### Choice
 
-Tradeoff:
-- polling adds unnecessary database queries when there is no work
-- tasks may wait briefly until the next polling cycle
+Tasks are executed using Python background threads inside the FastAPI process.
 
-A production system could use an event-driven queue instead.
+### Alternative
 
-## Retry strategy
+Use a dedicated worker system such as Celery with Redis or another external queue.
 
-Retries use a simple increasing delay based on the attempt number.
+### Why I chose background threads
 
-Advantages:
-- easy to understand
-- prevents immediate repeated retries
+Threads keep the implementation small and easy to understand.
 
-Tradeoff:
-- this is not a full exponential backoff strategy
-- there is no jitter
+They allow multiple simulated tasks to run concurrently without requiring additional infrastructure.
 
-A production system could use exponential backoff with jitter.
+### Why I did not choose a distributed queue
 
-## Dependency handling
+A system such as Celery would be more scalable and reliable across multiple machines, but it would make the assignment significantly more complex.
 
-Task dependencies are stored as JSON inside the task row.
+The goal of this project is to demonstrate scheduling, dependencies, retries, and failure handling rather than infrastructure setup.
 
-Advantages:
-- simple schema
-- easy to retrieve with the task
+---
 
-Tradeoff:
-- dependency queries are less efficient than using a separate relational table
-- more complex dependency graphs would be harder to query directly in SQL
+## 3. Polling scheduler instead of event-driven scheduling
 
-For a larger system, dependencies could be stored in a separate task_dependencies table.
+### Choice
 
-## Restart recovery
+The scheduler periodically reads waiting tasks from SQLite.
 
-Tasks that were running when the service stopped are moved back to waiting during startup.
+### Alternative
 
-Advantages:
-- prevents tasks from remaining permanently stuck in running state
-- simple recovery behaviour
+Use an event-driven queue where new tasks immediately notify workers.
 
-Tradeoff:
-- the service cannot know whether the original work actually completed just before the crash
-- this can result in a task being executed again
+### Why I chose polling
 
-Real production systems would need idempotent task execution or stronger delivery guarantees.
+Polling is straightforward to implement and debug.
 
-## Cancellation
+For the small number of tasks expected in this assessment, the extra database checks are acceptable.
 
-Cancellation changes the persisted task status.
+### Why I did not choose event-driven scheduling
 
-Tradeoff:
-- the current implementation cannot forcibly terminate arbitrary Python work that is already executing
-- the worker checks task state and stops when cancellation is detected
+An event-driven system would reduce unnecessary polling and respond more quickly, but it would require additional coordination or messaging infrastructure.
 
-For long-running real tasks, cooperative cancellation would need to be built into the task implementation.
+For this project, that complexity was not necessary.
 
-## Concurrency
+---
 
-The concurrency limit is configurable using the `MAX_CONCURRENT_TASKS` environment variable.
+## 4. Requeue interrupted tasks after restart instead of failing them
 
-Tradeoff:
-- the limit is only enforced within one process
-- multiple application instances would each have their own independent limit
+### Choice
 
-A distributed implementation would require a shared concurrency mechanism.
+If the service restarts while a task is marked as `running`, the task is changed back to `waiting`.
 
-## Additional improvement
+### Alternative
 
-Task lifecycle timestamps were added:
+Mark interrupted tasks as permanently `failed`.
 
-- `created_at`
-- `started_at`
-- `completed_at`
+### Why I chose to requeue them
 
-This makes the service easier to operate and debug with minimal additional complexity.
+A service interruption does not necessarily mean the task itself failed.
+
+Returning the task to `waiting` allows the scheduler to recover automatically and try the work again.
+
+### Why I did not mark them failed
+
+Marking every interrupted task as failed would require manual recovery even when the task could safely be retried.
+
+The downside of requeueing is that duplicate work is possible if the task completed externally just before the crash.
+
+In a production system, task operations should therefore be idempotent or use stronger delivery guarantees.

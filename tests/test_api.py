@@ -7,7 +7,7 @@ from app.main import startup_event
 
 from app.dependencies import has_cycle
 
-from app.scheduler import start_scheduler
+from app.scheduler import start_scheduler,has_blocking_dependency
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -275,3 +275,41 @@ def test_no_cycle_detection():
     }
 
     assert has_cycle(graph) is False
+
+
+def test_cancelled_dependency_is_blocking():
+    parent_id = str(uuid.uuid4())
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO tasks (
+            id,
+            name,
+            status,
+            dependencies,
+            attempts,
+            max_retries,
+            failure_chance,
+            error
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            parent_id,
+            "cancelled_parent",
+            TaskStatus.CANCELLED.value,
+            "[]",
+            0,
+            0,
+            0.0,
+            "Task cancelled by user",
+        ),
+    )
+
+    connection.commit()
+    connection.close()
+
+    assert has_blocking_dependency([parent_id]) is True

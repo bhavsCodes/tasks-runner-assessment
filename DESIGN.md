@@ -2,22 +2,63 @@
 
 ## Overview
 
-This project is a small task runner service built with FastAPI and SQLite.
+This project is a small task runner service built using FastAPI and SQLite.
 
-A task can:
+Tasks can:
+
 - run independently
 - depend on other tasks
 - retry after failure
 - be cancelled
-- become blocked if a dependency fails
+- become blocked when a required dependency fails or is cancelled
+- survive application restarts through database persistence
 
-The scheduler runs in the background and picks up tasks that are ready to execute.
+The scheduler runs in the background and starts tasks when they are ready.
+
+---
+
+## Real-World Scenario
+
+I chose a document-processing pipeline as the example scenario.
+
+For example, when a document is uploaded, the system could create tasks such as:
+
+1. `validate_document`
+2. `extract_text`
+3. `generate_summary`
+4. `store_results`
+
+The dependency flow could look like:
+
+`validate_document -> extract_text -> generate_summary -> store_results`
+
+`extract_text` must not run until `validate_document` succeeds.
+
+Similarly, `generate_summary` must wait for `extract_text`.
+
+For this assessment, the real work is simulated instead of actually processing documents.
+
+Each task:
+
+- sleeps for a random duration between 1 and 3 seconds
+- has a configurable `failure_chance`
+
+This keeps the focus on scheduling and task management.
+
+---
 
 ## Main Components
 
-### FastAPI API Layer
+### API
 
-`app/main.py` contains the HTTP endpoints used to create tasks, get task status, cancel tasks, and view scheduler statistics.
+`app/main.py`
+
+The FastAPI application provides endpoints for:
+
+- submitting tasks
+- checking task status
+- cancelling tasks
+- viewing scheduler statistics
 
 Main endpoints:
 
@@ -26,46 +67,35 @@ Main endpoints:
 - `POST /tasks/{task_id}/cancel`
 - `GET /stats`
 
-### SQLite Persistence
+---
 
-`app/database.py` manages the SQLite database.
+## Persistence
 
-Task state is persisted so tasks are not lost when the service restarts.
+`app/database.py`
 
-The database stores:
+SQLite is used to persist tasks.
+
+The database stores information including:
 
 - task id
-- name
+- task name
 - status
 - dependencies
-- retry information
+- attempts
+- maximum retries
 - failure chance
-- error message
-- timestamps
+- error information
+- created timestamp
+- started timestamp
+- completed timestamp
 
-### Scheduler
+Because task state is stored in SQLite, completed work is not forgotten when the application restarts.
 
-`app/scheduler.py` contains the background scheduler.
-
-The scheduler:
-
-1. Finds tasks in `waiting` state.
-2. Checks dependency status.
-3. Blocks tasks whose dependencies failed.
-4. Starts tasks only when all dependencies succeeded.
-5. Limits concurrent execution.
-6. Handles retries.
-7. Updates task state after execution.
-
-### Dependency Validation
-
-`app/dependencies.py` validates task dependencies.
-
-It checks that referenced tasks exist and contains cycle detection logic to reject circular dependency graphs.
+---
 
 ## Task States
 
-The service uses the following states:
+The service supports:
 
 - `waiting`
 - `running`
@@ -74,73 +104,70 @@ The service uses the following states:
 - `blocked`
 - `cancelled`
 
-A normal task typically follows:
+A successful task normally follows:
 
 `waiting -> running -> succeeded`
 
-A failing task may follow:
+A task that needs a retry may follow:
 
-`waiting -> running -> waiting -> running -> failed`
+`waiting -> running -> running -> succeeded`
 
-A task with a failed dependency becomes:
+A permanently failing task ends in:
 
-`waiting -> blocked`
+`failed`
 
-A cancelled task becomes:
+A task whose dependency fails or is cancelled becomes:
 
-`waiting/running -> cancelled`
+`blocked`
+
+---
+
+## Dependencies
+
+A task runs only when all of its dependencies have succeeded.
+
+Before starting a waiting task, the scheduler checks its dependency statuses.
+
+If a dependency is still waiting or running, the task remains waiting.
+
+If a dependency permanently fails or is cancelled, the dependent task becomes blocked.
+
+Circular dependencies are checked using graph traversal logic in:
+
+`app/dependencies.py`
+
+A cycle is rejected rather than allowing tasks to wait forever.
+
+---
 
 ## Retry Behaviour
 
 Each task has a configurable `max_retries`.
 
-The total number of attempts is:
+The maximum number of attempts is:
 
 `max_retries + 1`
 
-After a failed attempt, the task returns to `waiting` and waits before retrying.
+When an attempt fails and retries remain, the service waits before trying again.
 
-The retry delay increases with the attempt number.
+The delay increases with the attempt number.
+
+For example:
+
+- after attempt 1: 2-second delay
+- after attempt 2: 4-second delay
+
+If all attempts fail, the task is marked `failed`.
+
+---
 
 ## Concurrency
 
-The scheduler uses a configurable concurrency limit.
-
-The environment variable is:
+The maximum number of tasks that may run at once is configurable using:
 
 `MAX_CONCURRENT_TASKS`
 
-If it is not provided, the default value is `2`.
+For example:
 
-## Restart Behaviour
-
-If the service stops while a task is in `running` state, the task would otherwise remain stuck.
-
-During application startup, tasks left in `running` state are moved back to `waiting`.
-
-This allows the scheduler to recover them after restart.
-
-## Cancellation
-
-Tasks can be cancelled through:
-
-`POST /tasks/{task_id}/cancel`
-
-Completed, failed, blocked, or already-cancelled tasks cannot be cancelled again.
-
-## Statistics
-
-`GET /stats` returns the current number of:
-
-- running tasks
-- waiting tasks
-
-## Additional Improvement
-
-Timestamps were added as an additional operational improvement:
-
-- `created_at`
-- `started_at`
-- `completed_at`
-
-These make it easier to understand task lifecycle and execution timing.
+```text
+MAX_CONCURRENT_TASKS=4
